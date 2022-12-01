@@ -2,24 +2,40 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StorePostRequest;
+use App\Http\Requests\UpdatePostRequest;
 use App\Models\Category;
 use App\Models\Post;
 use App\Models\Tag;
+use App\Services\PostHandlerService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 
 class PostController extends Controller
 {
+
+    protected PostHandlerService $postHandlerService;
+
+    public function __construct(PostHandlerService $postHandlerService)
+    {
+        $this->postHandlerService = $postHandlerService;
+    }
+
     public function index(Request $request): View
     {
+        // TODO: add filter by tags
 
-        //TODO: add filter by tags
+        $posts = Post::query()
+            ->whereHas('tags', function (Builder $builder) use ($request) {
+                if ($request->has('tags')) {
+                    $builder->whereIn('name', $request->tags);
+                }
+            })
+            ->with('tags')
+            ->paginate(5);
 
-        $posts = Post::paginate(5);
         return view('post.list', compact('posts'));
     }
 
@@ -31,82 +47,11 @@ class PostController extends Controller
         return view('post.add', compact('categories', 'tags'));
     }
 
-    public function store(Request $request)
+    public function store(StorePostRequest $request)
     {
-        $data = $_POST;
+        $data = $request->validated();
 
-        $validator = Validator::make($data, [
-            'title' => 'required',
-            'description'  => 'required',
-            'body'  => 'required',
-            'category_id'  => 'required',
-        ]);
-
-        if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
-        }
-
-        $title_too_long = false;
-        $description_too_long = false;
-
-        if (strlen($data['title']) > 100) {
-            $title_too_long = true;
-        }
-
-        if (strlen($data['description']) > 250) {
-            $description_too_long = true;
-        }
-
-        $category_exists = DB::table('categories')->get()->filter(function ($value) use ($data) {
-                return $value->id == $data['category_id'];
-        })->count() > 0;
-
-        $errors = [];
-
-        if ($title_too_long) {
-            $errors['title'] = 'The Title is more than 100 characters. Try something shorter.';
-        }
-
-        if ($description_too_long) {
-            $errors['description'] = 'The Description is more than 250 characters. Try something shorter.';
-        }
-
-        if ($category_exists) {
-            $errors['category_id'] = 'Category not found.';
-        }
-
-        if (count($errors) > 0) {
-            throw @ValidationException::withMessages($errors);
-        }
-
-        $post = new Post();
-
-        $post->title = $data['title'];
-        $post->slug = Str::slug($data['title']);
-        $post->description = $data['description'];
-        $post->body = $data['body'];
-        $post->category_id = $data['category_id'];
-
-        $newImage = $request->image;
-
-        $path = null;
-
-        if (!empty($newImage)) {
-            $path = $newImage->store('post-thumbnails', 'public');
-
-
-            if ($path) {
-                $newImage = $path;
-            }
-        }
-
-        $post->image = $newImage;
-
-        $post->save();
-
-        $post->tags()->attach($data['tags']);
+        $post = $this->postHandlerService->storePost($data, $request->image);
 
         if (!empty($post)) {
             return redirect()
@@ -121,127 +66,51 @@ class PostController extends Controller
 
     public function edit(int $postId)
     {
+        // Also could use route binding, but it`s a bad practice
+
         $categories = Category::all();
-        $post = Post::whereId($postId)->first();
 
-        if ($post) {
-            return view('post.edit', compact('post', 'categories'));
-        }
+        $post = Post::query()->firstOrFail($postId);
 
-        return redirect()
-            ->route('posts.index');
+        return view('post.edit', compact('post', 'categories'));
     }
 
-    public function update(Request $request)
+    public function update(UpdatePostRequest $request)
     {
-        $data = $_POST;
+        // TODO: Incorrect USE ! 'PATH' is better for this realisation
 
-        $post = Post::whereId($data['id'])->first();
+        $post = Post::query()->firstOrFail($request->id);
 
-        $validator = Validator::make($data, [
-            'title' => 'required',
-            'category_id'  => 'required'
-        ]);
-
-        if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
-        }
-
-        $title_too_long = false;
-
-        if (strlen($data['title']) > 100) {
-            $title_too_long = true;
-        }
-
-        $category_exists = DB::table('categories')->get()->filter(function ($value) use ($data) {
-                return $value->id == $data['category_id'];
-            })->count() > 0;
-
-        $errors = [];
-
-        if ($title_too_long) {
-            $errors['title'] = 'The Title is more than 100 characters. Try something shorter.';
-        }
-
-        if (! $category_exists) {
-            $errors['category_id'] = 'Category not found.';
-        }
-
-        if (count($errors) > 0) {
-            throw @ValidationException::withMessages($errors);
-        }
-
-        if ($post != null) {
-            $post->update([
-                'title' => $data['title'],
-                'slug' => Str::slug($data['title']),
-                'description' => $data['description'],
-                'body' => $data['body'],
-                'category_id' => $data['category_id']
-            ]);
-
-            $newImage = $request->image;
-
-            $path = null;
-            if (!empty($newImage)) {
-                $path = $newImage->store('post-thumbnails', 'public');
-                // $path = $newImage->storeAs('post-thumbnails', $post->id() . '.png', 'public');
-
-                if ($path) {
-                    if (!empty($post->image)) {
-                        Storage::disk('public')->delete($post->image);
-                    }
-                    $newImage = $path;
-                }
-
-                $post->update([
-                    'image' => $newImage
-                ]);
-            }
-        }
-
-        if (!empty($post)) {
-            return redirect()
-                ->route('posts.index')
-                ->with('success', 'updated');
-        }
+        $this->postHandlerService->updatePost($post, $request->validated(), $request->image);
 
         return redirect()
             ->route('posts.index')
-            ->with('error', 'something went wrong');
+            ->with('success', 'updated');
     }
 
     public function destroy(int $postId)
     {
-        $post = Post::whereId($postId)->first();
+        // Also could use route binding, but it`s a bad practice
 
-        if (!empty($post)) {
+        $post = Post::query()->firstOrFail($postId);
 
-            $path = null;
-            if (!empty($post->image)) {
-                Storage::disk('public')->delete($post->image);
-                $post->image = $path;
-            }
-
-            // $post->tags()->detach();
-
-            $post->delete();
-
-            return redirect()
-                ->route('posts.index')
-                ->with('success', 'deleted');
+        if (!empty($post->image)) {
+            Storage::disk('public')->delete($post->image);
         }
+
+        $post->tags()->detach();
+
+        $post->delete();
 
         return redirect()
             ->route('posts.index')
-            ->with('error', 'something went wrong');
+            ->with('success', 'deleted');
+
     }
 
     public function show(string $slug)
     {
-        $post = Post::where('slug', $slug)->first();
+        $post = Post::query()->where('slug', $slug)->first();
 
         if (!empty($post)) {
             return view('blog.show', compact('post'));
