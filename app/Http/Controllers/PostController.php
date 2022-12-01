@@ -6,6 +6,8 @@ use App\Models\Category;
 use App\Models\Post;
 use App\Models\Tag;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
@@ -31,25 +33,35 @@ class PostController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
+        $data = $_POST;
+
+        $validator = Validator::make($data, [
             'title' => 'required',
             'description'  => 'required',
             'body'  => 'required',
             'category_id'  => 'required',
         ]);
 
+        if ($validator->fails()) {
+            return redirect()->back()
+                ->withErrors($validator)
+                ->withInput();
+        }
+
         $title_too_long = false;
         $description_too_long = false;
 
-        if (strlen($request->get('title')) > 100) {
+        if (strlen($data['title']) > 100) {
             $title_too_long = true;
         }
 
-        if (strlen($request->get('description')) > 250) {
+        if (strlen($data['description']) > 250) {
             $description_too_long = true;
         }
 
-        $category = Category::where('id', $request->get('category_id'))->first();
+        $category_exists = DB::table('categories')->get()->filter(function ($value) use ($data) {
+                return $value->id == $data['category_id'];
+        })->count() > 0;
 
         $errors = [];
 
@@ -61,21 +73,21 @@ class PostController extends Controller
             $errors['description'] = 'The Description is more than 250 characters. Try something shorter.';
         }
 
-        if (empty($category)) {
+        if ($category_exists) {
             $errors['category_id'] = 'Category not found.';
         }
 
         if (count($errors) > 0) {
-            throw ValidationException::withMessages($errors);
+            throw @ValidationException::withMessages($errors);
         }
 
         $post = new Post();
 
-        $post->title = $request->title;
-        $post->slug = Str::slug($request->title);
-        $post->description = $request->description;
-        $post->body = $request->body;
-        $post->category_id = $request->category_id;
+        $post->title = $data['title'];
+        $post->slug = Str::slug($data['title']);
+        $post->description = $data['description'];
+        $post->body = $data['body'];
+        $post->category_id = $data['category_id'];
 
         $newImage = $request->image;
 
@@ -94,7 +106,7 @@ class PostController extends Controller
 
         $post->save();
 
-        $post->tags()->attach($request->tags);
+        $post->tags()->attach($data['tags']);
 
         if (!empty($post)) {
             return redirect()
@@ -122,20 +134,30 @@ class PostController extends Controller
 
     public function update(Request $request)
     {
-        $post = Post::whereId($request['id'])->first();
+        $data = $_POST;
 
-        $request->validate([
+        $post = Post::whereId($data['id'])->first();
+
+        $validator = Validator::make($data, [
             'title' => 'required',
-            'category_id'  => 'required',
+            'category_id'  => 'required'
         ]);
+
+        if ($validator->fails()) {
+            return redirect()->back()
+                ->withErrors($validator)
+                ->withInput();
+        }
 
         $title_too_long = false;
 
-        if (strlen($request->get('title')) > 100) {
+        if (strlen($data['title']) > 100) {
             $title_too_long = true;
         }
 
-        $category = Category::where('id', $request->get('category_id'))->first();
+        $category_exists = DB::table('categories')->get()->filter(function ($value) use ($data) {
+                return $value->id == $data['category_id'];
+            })->count() > 0;
 
         $errors = [];
 
@@ -143,21 +165,21 @@ class PostController extends Controller
             $errors['title'] = 'The Title is more than 100 characters. Try something shorter.';
         }
 
-        if (empty($category)) {
+        if (! $category_exists) {
             $errors['category_id'] = 'Category not found.';
         }
 
         if (count($errors) > 0) {
-            throw ValidationException::withMessages($errors);
+            throw @ValidationException::withMessages($errors);
         }
 
         if ($post != null) {
             $post->update([
-                'title' => $request->title,
-                'slug' => Str::slug($request->title),
-                'description' => $request->description,
-                'body' => $request->body,
-                'category_id' => $request->category_id
+                'title' => $data['title'],
+                'slug' => Str::slug($data['title']),
+                'description' => $data['description'],
+                'body' => $data['body'],
+                'category_id' => $data['category_id']
             ]);
 
             $newImage = $request->image;
